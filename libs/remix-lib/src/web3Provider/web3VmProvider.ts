@@ -1,6 +1,6 @@
 import { hexConvert, hexListFromBNs, formatMemory } from '../util'
 import { normalizeHexAddress } from '../helpers/uiHelper'
-import { toChecksumAddress, BN, toBuffer } from 'ethereumjs-util'
+import { toChecksumAddress, BN, toBuffer, Address } from 'ethereumjs-util'
 import Web3 from 'web3'
 
 export class Web3VmProvider {
@@ -106,18 +106,18 @@ export class Web3VmProvider {
       tx['to'] = toChecksumAddress(hexConvert(data.to))
     }
     this.processingAddress = tx['to']
-    tx['data'] = hexConvert(data.data)
-    tx['input'] = hexConvert(data.input)
-    tx['gas'] = (new BN(hexConvert(data.gas).replace('0x', ''), 16)).toString(10)
+    // tx['data'] = hexConvert(data.data)
+    tx['input'] = hexConvert(data.data)
+    tx['gas'] = data.gasLimit.toString(10)
     if (data.value) {
-      tx['value'] = hexConvert(data.value)
+      tx['value'] = data.value.toString(10)
     }
     this.txs[this.processingHash] = tx
     this.txsReceipt[this.processingHash] = tx
     this.storageCache[this.processingHash] = {}
     if (tx['to']) {
       const account = toBuffer(tx['to'])
-      this.vm.stateManager.dumpStorage(account, (storage) => {
+      this.vm.stateManager.dumpStorage(account).then((storage) => {
         this.storageCache[this.processingHash][tx['to']] = storage
         this.lastProcessedStorageTxHash[tx['to']] = this.processingHash
       })
@@ -206,7 +206,7 @@ export class Web3VmProvider {
         this.processingAddress = toChecksumAddress(this.processingAddress)
         if (!this.storageCache[this.processingHash][this.processingAddress]) {
           const account = toBuffer(this.processingAddress)
-          this.vm.stateManager.dumpStorage(account, (storage) => {
+          this.vm.stateManager.dumpStorage(account).then((storage) => {
             this.storageCache[this.processingHash][this.processingAddress] = storage
             this.lastProcessedStorageTxHash[this.processingAddress] = this.processingHash
           })
@@ -227,9 +227,10 @@ export class Web3VmProvider {
 
   getCode (address, cb) {
     address = toChecksumAddress(address)
-    const account = toBuffer(address)
-    this.vm.stateManager.getContractCode(account, (error, result) => {
-      cb(error, hexConvert(result))
+    this.vm.stateManager.getContractCode(Address.fromString(address)).then((result) => {
+      cb(hexConvert(result))
+    }).catch((error) => {
+      cb(error)
     })
   }
 

@@ -20,7 +20,7 @@ class InjectedProvider {
   }
 
   getBalanceInEther (address, cb) {
-    address = stripHexPrefix(address)
+    // address = stripHexPrefix(address)
     this.executionContext.web3().eth.getBalance(address, (err, res) => {
       if (err) {
         return cb(err)

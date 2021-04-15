@@ -1,5 +1,5 @@
 import { waterfall } from 'async'
-import { BN, privateToAddress, isValidPrivate, toChecksumAddress } from 'ethereumjs-util'
+import { BN, privateToAddress, isValidPrivate, toChecksumAddress, Address } from 'ethereumjs-util'
 import { stripHexPrefix } from 'ethjs-util'
 import { randomBytes } from 'crypto'
 import { EventEmitter } from 'events'
@@ -124,12 +124,13 @@ export class UniversalDApp {
 
     // FIXME: we don't care about the callback, but we should still make this proper
     const stateManager = this.executionContext.vm().stateManager
-    stateManager.getAccount(address, (error, account) => {
-      if (error) return console.log(error)
-      account.balance = balance || '0xf00000000000000001'
-      stateManager.putAccount(address, account, function cb (error) {
-        if (error) console.log(error)
+    stateManager.getAccount(address).then((account) => {
+      account.balance = new BN(balance.replace('0x', '') || 'f00000000000000001', 16)
+      stateManager.putAccount(address, account).catch((error) => {
+        console.log(error)
       })
+    }).catch((error) => {
+      console.log(error)
     })
 
     this.accounts[toChecksumAddress('0x' + address.toString('hex'))] = { privateKey, nonce: 0 }
@@ -177,7 +178,7 @@ export class UniversalDApp {
 
   /** Get the balance of an address */
   getBalance (address, cb) {
-    address = stripHexPrefix(address)
+    // address = stripHexPrefix(address)
 
     if (!this.executionContext.isVM()) {
       return this.executionContext.web3().eth.getBalance(address, (err, res) => {
@@ -191,11 +192,10 @@ export class UniversalDApp {
       return cb('No accounts?')
     }
 
-    this.executionContext.vm().stateManager.getAccount(Buffer.from(address, 'hex'), (err, res) => {
-      if (err) {
-        return cb('Account not found')
-      }
+    this.executionContext.vm().stateManager.getAccount(Address.fromString(address)).then((res) => {
       cb(null, new BN(res.balance).toString(10))
+    }).catch((error) => {
+      cb('Account not found')
     })
   }
 

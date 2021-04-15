@@ -5,8 +5,10 @@ import { EventManager } from '../eventManager'
 import { rlp, keccak, bufferToHex } from 'ethereumjs-util'
 import { Web3VmProvider } from '../web3Provider/web3VmProvider'
 import { LogsManager } from './logsManager'
-const EthJSVM = require('ethereumjs-vm').default
-const StateManager = require('ethereumjs-vm/dist/state/stateManager').default
+import VM from '@ethereumjs/vm'
+import Common from '@ethereumjs/common'
+import StateManager from '@ethereumjs/vm/dist/state/stateManager'
+import { StorageDump } from '@ethereumjs/vm/dist/state/interface'
 
 declare let ethereum: any
 let web3
@@ -23,52 +25,51 @@ if (typeof window !== 'undefined' && typeof window['ethereum'] !== 'undefined') 
 */
 
 class StateManagerCommonStorageDump extends StateManager {
-  constructor (arg) {
-    super(arg)
+  keyHashes
+  constructor () {
+    super()
     this.keyHashes = {}
   }
-
-  putContractStorage (address, key, value, cb) {
+S
+  putContractStorage (address, key, value) {
     this.keyHashes[keccak(key).toString('hex')] = bufferToHex(key)
-    super.putContractStorage(address, key, value, cb)
+    return super.putContractStorage(address, key, value)
   }
 
-  dumpStorage (address, cb) {
-    this._getStorageTrie(address, (err, trie) => {
-      if (err) {
-        return cb(err)
-      }
-      const storage = {}
-      const stream = trie.createReadStream()
-      stream.on('data', (val) => {
-        const value = rlp.decode(val.value)
-        storage['0x' + val.key.toString('hex')] = {
-          key: this.keyHashes[val.key.toString('hex')],
-          value: '0x' + value.toString('hex')
-        }
+  dumpStorage (address) {
+    return new Promise<StorageDump>((resolve, reject) => {
+      this._getStorageTrie(address).then((trie) => {
+        const storage = {}
+        const stream = trie.createReadStream()
+        stream.on('data', (val) => {
+          const value = rlp.decode(val.value)
+          storage['0x' + val.key.toString('hex')] = {
+            key: this.keyHashes[val.key.toString('hex')],
+            value: '0x' + value.toString('hex')
+          }
+        })
+        stream.on('end', function () {
+          resolve(storage)
+        })
+      }).catch((error) => {
+        reject(error)
       })
-      stream.on('end', function () {
-        cb(storage)
-      })
-    })
+    })    
   }
 
-  getStateRoot (cb) {
+  async getStateRoot () {
     const checkpoint = this._checkpointCount
     this._checkpointCount = 0
-    super.getStateRoot((err, stateRoot) => {
-      this._checkpointCount = checkpoint
-      cb(err, stateRoot)
-    })
+    const stateRoot = await super.getStateRoot()
+    this._checkpointCount = checkpoint
+    return stateRoot
   }
 
-  setStateRoot (stateRoot, cb) {
+  async setStateRoot (stateRoot) {
     const checkpoint = this._checkpointCount
     this._checkpointCount = 0
-    super.setStateRoot(stateRoot, (err) => {
-      this._checkpointCount = checkpoint
-      cb(err)
-    })
+    await super.setStateRoot(stateRoot)
+    this._checkpointCount = checkpoint
   }
 }
 
@@ -96,7 +97,7 @@ export class ExecutionContext {
     this.executionContext = null
     this.blockGasLimitDefault = 4300000
     this.blockGasLimit = this.blockGasLimitDefault
-    this.currentFork = 'muirGlacier'
+    this.currentFork = 'berlin'
     this.vms = {
       /*
       byzantium: createVm('byzantium'),
@@ -104,7 +105,7 @@ export class ExecutionContext {
       petersburg: createVm('petersburg'),
       istanbul: createVm('istanbul'),
       */
-      muirGlacier: this.createVm('muirGlacier')
+      berlin: this.createVm('berlin')
     }
     this.mainNetGenesisHash = '0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3'
     this.customNetWorks = {}
@@ -123,15 +124,15 @@ export class ExecutionContext {
   }
 
   createVm (hardfork) {
-    const stateManager = new StateManagerCommonStorageDump({})
-    stateManager.checkpoint(() => {})
-    const vm = new EthJSVM({
-      activatePrecompiles: true,
-      blockchain: stateManager.blockchain,
-      stateManager: stateManager,
-      hardfork: hardfork
-    })
-    vm.blockchain.validate = false
+    const stateManager = new StateManagerCommonStorageDump()
+    stateManager.checkpoint()
+    const common = new Common({ chain: 'mainnet', hardfork })
+    const vm = new VM({ 
+      common, 
+      activatePrecompiles: true, 
+      stateManager: stateManager
+    })   
+
     const web3vm = new Web3VmProvider()
     web3vm.setVM(vm)
     return { vm, web3vm, stateManager }
@@ -221,8 +222,8 @@ export class ExecutionContext {
     if (!infoCb) infoCb = () => {}
     if (context === 'vm') {
       this.executionContext = context
-      this.vms[this.currentFork].stateManager.revert(() => {
-        this.vms[this.currentFork].stateManager.checkpoint(() => {})
+      this.vms[this.currentFork].stateManager.revert().then(() => {
+        this.vms[this.currentFork].stateManager.checkpoint()
       })
       this.event.trigger('contextChanged', ['vm'])
       return cb()
